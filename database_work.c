@@ -102,6 +102,33 @@ typedef struct
 	Pager *pager;
 } Table;
 
+/* 游标定位Cursor*/
+typedef struct{
+	Table* table;
+	uint32_t atRowNum;
+	uint32_t end_of_table;
+} Cursor;
+
+/* 表前后游标 */
+Cursor* table_start(Table* table)
+{
+	Cursor* cur = (Cursor*)malloc(sizeof(Cursor));
+	cur->table = table;
+	cur->atRowNum = 0;
+	cur->end_of_table = (table->num_rows == 0);
+	return cur;
+}
+
+Cursor* table_end(Table* table)
+{
+	Cursor* cur = (Cursor*)malloc(sizeof(Cursor));
+	cur->table = table;
+	cur->atRowNum = table->num_rows;
+	cur->end_of_table = 1;
+	return cur;
+}
+
+
 /* 连接数据库 */
 Pager* pager_open(const char* filename)
 {
@@ -231,14 +258,23 @@ void* get_page(Pager *pager, uint32_t page_num)
 	return pager->pages[page_num];
 }
 
-void *row_slot(Table *table, uint32_t row_num)
+void *cursor_point(Cursor* cur)
 {
-	if (table == NULL) {
+	if (cur == NULL) {
 		return NULL;
 	}
+	uint32_t row_num = cur->atRowNum;
 	uint32_t page_num = row_num / ROWS_PER_PAGE;
-	void* page = get_page(table->pager, page_num);
+	void* page = get_page(cur->table->pager, page_num);
 	return page + (row_num % ROWS_PER_PAGE) * ROW_SIZE;
+}
+
+void cursor_advance(Cursor* cur)
+{
+	cur->atRowNum++;
+	if (cur->atRowNum >= cur->table->num_rows) {
+		cur->end_of_table = 1;
+	}
 }
 
 InputBuffer *new_input_buffer(void)
@@ -332,18 +368,23 @@ ExecuteResult execute_insert(Statement *statement, Table *table)
 		return EXECUTE_TABLE_FULL;
 	}
 	Row *row_to_inset = &(statement->row_to_insert);
-	serialize_row(row_to_inset, row_slot(table, table->num_rows));
+	Cursor* cur = table_end(table);
+	serialize_row(row_to_inset, cursor_point(cur));
 	table->num_rows++;
+	free(cur);
 	return EXECUTE_SUCCESS;
 }
 
 ExecuteResult execute_select(Statement *statement, Table *table)
 {
 	Row row;
-	for (uint32_t i = 0; i < table->num_rows; i++) {
-		deserialize_row(row_slot(table, i), &row);
+	Cursor* cur = table_start(table);
+	while (!cur->end_of_table) {
+		deserialize_row(cursor_point(cur), &row);
 		print_row(&row);
+		cursor_advance(cur);
 	}
+	free(cur);
 	return EXECUTE_SUCCESS;
 }
 
